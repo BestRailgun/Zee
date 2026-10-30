@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="0.55" stop-color="#F2EDE1"/>
+      <stop offset="1" stop-color="#F7F3E9"/>
+    </linearGradient>
+    <linearGradient id="zg" x1="0" y1="0" x2="0.9" y2="1">
+      <stop offset="0" stop-color="#26252A"/>
+      <stop offset="1" stop-color="#111114"/>
+    </linearGradient>
+    <linearGradient id="ac" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#D9AE55"/>
+      <stop offset="1" stop-color="#A87F2C"/>
+    </linearGradient>
+    <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="16" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <rect x="40" y="40" width="944" height="944" rx="224" fill="url(#bg)"/>
+  <rect x="40" y="40" width="944" height="944" rx="224" fill="none" stroke="#DFD4BD" stroke-width="3"/>
+  <rect x="86" y="86" width="852" height="852" rx="190" fill="none" stroke="#ECE4D4" stroke-width="2"/>
+
+  <!-- Z -->
+  <g fill="url(#zg)">
+    <path d="M300 268 H724 V346 H300 Z"/>
+    <path d="M724 268 L724 360 L366 592 L300 592 L300 512 Z" opacity="0.96"/>
+    <path d="M300 592 H724 V670 H300 Z"/>
+  </g>
+
+  <!-- 下载箭头：装入插槽 -->
+  <g filter="url(#glow)">
+    <rect x="474" y="676" width="76" height="104" rx="16" fill="url(#ac)"/>
+    <path d="M512 884 L412 792 Q398 780 414 780 H610 Q626 780 612 792 Z" fill="url(#ac)"/>
+    <rect x="316" y="916" width="392" height="22" rx="11" fill="url(#ac)" opacity="0.55"/>
+  </g>
+</svg>

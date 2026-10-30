@@ -1,0 +1,33 @@
+# ---- 运行产物与本地数据 ----
+logs/
+mitm-config/
+artifacts/
+evidence/
+analysis/
+lab/
+
+# ---- Python 环境 ----
+venv
+.venv
+env
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# ---- 抓包导出 ----
+*.pcap
+*.pcapng
+*.mitm
+*.har
+
+# ---- 系统 / 编辑器 ----
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# ---- 构建产物 / 备选素材（发布包按需手动上传）----
+release/
+assets/zeeload.iconset/
+assets/alt-blue/

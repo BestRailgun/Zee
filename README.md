@@ -1,0 +1,283 @@
+# 极载 · ZEEload
+
+![ZEEload](assets/banner.png)
+
+在没有 root、没有 adb、车机不允许安装未知来源应用的情况下，**把任意 APK 装进极氪车机**。
+
+原理是让车机自己的应用商店把它当成一次「应用更新」安装下去：透明解密商店流量 → 注入一条假更新 → 把下载内容换掉。全程不修改车机系统、不往车机装证书，退出即恢复。
+
+> 当前版本：**v1.0.0**（2026-10-30）· 已在极氪 7X 上实测成功（依次装上 DiPlay 0.2.22、ES 文件浏览器、MT管理器）
+> 技术原理与安全分析见 [docs/技术路径-车机APK侧载.md](docs/技术路径-车机APK侧载.md)
+
+---
+
+## 目录
+
+- [适用条件](#适用条件)
+- [环境要求（版本）](#环境要求版本)
+- [原理](#原理)
+- [两个漏洞的组合](#两个漏洞的组合)
+- [快速开始（macOS）](#快速开始macos)
+- [Windows（beta）](#windowsbeta)
+- [结果判读](#结果判读)
+- [常见问题](#常见问题)
+- [让 AI 帮你配置](#让-ai-帮你配置)
+- [已知限制](#已知限制)
+- [安全与合规](#安全与合规)
+- [文件结构](#文件结构)
+
+## 适用条件
+
+| 项目 | 要求 |
+|---|---|
+| 车机 | Android 车机，且系统 **仍信任 emSign 根证书**（国内车机大多没有 GMS，未收到封禁列表；2026-10-22 之后更新过信任库的车机可能失效） |
+| 电脑 | macOS（已验证）或 Windows 10/11（beta） |
+| 网络 | 电脑给车机开热点/互联网共享，车机连上后能上网 |
+| 权限 | 电脑需要一次管理员权限（配置 pf / 加载 WinDivert 驱动） |
+| 车机侧 | 无需任何设置、无需装证书、无需开未知来源 |
+
+**只用于你自己的车辆。** 详见[安全与合规](#安全与合规)。
+
+## 环境要求（版本）
+
+| 组件 | 最低要求 | 本项目实测 | 说明 |
+|---|---|---|---|
+| Python | **3.12** | 3.12.7 | mitmproxy 12.3+ 的硬性要求；3.10 / 3.11 装不到支持 `--emudhra` 的版本 |
+| mitmproxy | **12.3** | 12.3.1 | `--emudhra` 从 12.3 起提供 |
+| pydivert（仅 Windows） | **4.0** | 4.0.1 | WinDivert 的 Python 绑定，自带驱动 |
+| pip | 任意较新版本 | 24.x | `python -m pip install -U pip` |
+| macOS | 13+ | 15.6.1（arm64） | 依赖系统自带的 `pf`、互联网共享 |
+| Windows | 10 / 11 x64 | 未实测（beta） | 需要管理员权限 + 移动热点（ICS） |
+
+检查命令：
+
+```bash
+python3 --version
+mitmdump --version            # 需要 Mitmproxy 12.3+
+python3 -m pip show mitmproxy pydivert | grep -E "^(Name|Version)"
+```
+
+> Windows 上如果默认 `python` 是 3.10/3.11，请显式用 `py -3.12`；工具检测到低版本时会自动尝试 `py -3.12` 重新运行。
+
+## 原理
+
+```text
+车机 ──> 电脑热点
+          ├─ 透明转发：车机到 *.zeekrlife.com 的 443 全部转到本机（macOS: pf，Windows: WinDivert）
+          ├─ 解密：mitmproxy --emudhra，车机信任这条链，所以能解开 TLS
+          ├─ 注入：商店「检查更新」时，把已安装应用的版本改成更高、哈希/大小指向目标 APK
+          └─ 替换：商店真正下载时，把响应体换成目标 APK（按 Range 正确切分）
+车机商店：哈希校验通过 → 请求签名（服务端对非官方哈希返回 null，商店不拦）→ 安装器按「新应用」装上
+```
+
+四个关键点（都在实测中确认过）：
+
+1. 车机接受 mitmproxy 内置的 eMudhra 链，**不需要往车机装任何证书**；
+2. 商店的哈希校验基准来自 appList 元数据，而元数据走同一条可解密的 TLS，可以一起改写；
+3. 服务端只给官方哈希签名（非官方返回 `sign:null`），但**商店/安装器不因 null 中止**；
+4. 包名不同会被安装器当成**新应用**安装 —— 所以只能装新包，不能覆盖已装应用。
+
+## 两个漏洞的组合
+
+本方法**不是单点突破**，而是把两个独立的安全问题串起来用——缺一不可：
+
+| | 漏洞 | 在本项目里的作用 |
+|---|---|---|
+| **A. CA 证书链不可信** | eMudhra 中间 CA 私钥泄露（2026-10-17 披露），车机系统仍信任该链 | 让网关能够**解密并改写**商店的 HTTPS（元数据、下载内容） |
+| **B. 商店安装授权逻辑不一致** | 直接安装路径要求有效 `sign`；而「更新已安装应用」路径**不校验** `sign`——服务端返回 `sign: null` 仍继续下载并安装 | 让改写后的第三方 APK 以「更新」名义**绕过安装授权** |
+
+```text
+A：解密 + 改写 TLS
+   └─ 把「安装任意 APK」伪装成「某个已安装应用有新版本」
+        └─ B：更新路径不校验 sign
+             └─ 目标 APK 以「更新」名义被安装
+```
+
+单独利用任何一个都不够：
+
+- **只有 A**：能看能改，但任意 APK 拿不到有效签名，卡在授权；
+- **只有 B**：需要能改写商店流量才能把「更新」指向自己的 APK，而 HTTPS 挡住了；
+- **A + B**：才能把「任意 APK」送进安装流程。
+
+实测证据（2026-10-30）：服务端对非官方哈希返回 `sign: null`，商店仍完成下载并安装 DiPlay 0.2.22。完整论证、A/B 对照与厂商修复建议见 [docs/技术路径-车机APK侧载.md §4.5](docs/技术路径-车机APK侧载.md#45-两个漏洞的组合核心结论)。
+
+> 这不是「破解签名」：APK 签名和服务端签名服务本身都没被攻破，被绕过的是校验点。
+
+## 快速开始（macOS）
+
+### 1. 安装 mitmproxy
+
+脚本会自动在以下位置找 `mitmdump`，任选一种即可：
+
+```bash
+# 方式 A：系统/Python 环境
+pip3 install mitmproxy
+
+# 方式 B：包内虚拟环境（推荐，不污染系统）
+python3 -m venv venv && ./venv/bin/pip install mitmproxy
+```
+
+### 2. 开热点、连车机
+
+系统设置 → 通用 → 共享 → **互联网共享**，共享来源选你的上网接口，共享到 Wi-Fi；车机连上这个热点。
+
+### 3. 一键侧载
+
+把要装的 APK **拖到 `一键侧载安装.command` 上**（或双击后输入路径），输入 Mac 密码。
+
+脚本会自动完成：探测共享接口（`bridge*`）→ 从 DHCP 租约识别车机 → 配置 pf 独立 anchor → 启动 mitmdump → 注入 + 替换。
+
+### 4. 车机侧操作
+
+1. 打开应用商店 → **点开任意一个应用的详情页**（详情页会实时请求元数据，这是注入生效的关键入口）；
+2. 看电脑终端出现：
+
+   ```
+   [inject-update] 已为 ALL 注入新版本（N 个下载地址已武装）
+   ```
+
+3. 在详情页点「更新 / 安装」，接着应出现：
+
+   ```
+   [replace-apk] 以 xxx.apk (NNNN 字节) 替换下载，Range=...
+   ```
+
+4. 进度走完即安装完成，按 **Ctrl-C** 结束（会自动卸载 pf 规则）。
+
+装完如果图标没出现，重启车机或等桌面刷新；部分应用需要额外硬件（如 DiPlay 需要 CarPlay 转换盒）。
+
+### 手动 / 高级用法
+
+```bash
+# 指定 APK 与注入目标（默认 ALL：所有已安装应用都伪装成可更新）
+sudo bash scripts/zeekr-sideload.sh --apk /path/app.apk
+sudo bash scripts/zeekr-sideload.sh --apk app.apk --pkg com.zeekr.media.podcast
+
+# 只看会执行什么，不改系统（无需密码）
+bash scripts/transparent-test.sh --check-only --all-443
+
+# 环境自检
+bash scripts/check-environment.sh
+```
+
+可用环境变量覆盖自动探测：`ZEEKR_IFACE`、`ZEEKR_CAR_IP`、`ZEEKR_CAR_MAC`、`ZEEKR_VENV`、`ZEEKR_DOMAINS`、`ZEEKR_HOSTS`。
+
+## Windows（beta）
+
+`windows/` 是自包含版本，用 **WinDivert** 代替 pf，用本地 **SNI 分流器**把流量喂给 mitmproxy（Windows 没有 pf，mitmproxy 透明模式不可用）：
+
+```powershell
+cd windows
+python -m pip install -U mitmproxy pydivert
+
+# 以管理员身份运行
+python win_sideload.py --apk "C:\path\app.apk"
+```
+
+或直接双击 `windows\一键侧载-Windows.bat` 并拖入 APK（会自动申请管理员权限）。
+
+详细说明、排错与限制见 [windows/README.md](windows/README.md)。**Windows 版未在真实环境验证，属 beta。**
+
+## 结果判读
+
+| 终端 / 车机现象 | 含义 | 处理 |
+|---|---|---|
+| `[inject-update] ... 已武装` | 元数据注入成功 | 可以去点更新了 |
+| 没有 `[inject-update]` | 商店用了缓存，没重新拉元数据 | **点开应用详情页**；仍不行就重启车机 |
+| `[replace-apk] 以 xxx.apk 替换下载` | 替换成功 | 等安装完成 |
+| `[replace-apk] 该下载...按原样透传` | 注入没生效，下载的是官方内容 | 同上，先让注入成功 |
+| 商店报「下载失败」 | 内容哈希与元数据对不上（替换没发生） | 检查上面的日志与机型 |
+| 安装报「包名冲突」 | 目标 APK 与已安装应用同名 | 换包名不同的 APK |
+| 装上了但桌面没图标 | 车机桌面过滤了非白名单应用 | 重启车机；从「设置 → 应用」里直接打开 |
+
+## 常见问题
+
+**Q：会不会把车机弄坏？**
+不会。全程只改电脑上的转发规则和发给车机的响应内容，不写车机系统、不装证书、不改分区。退出脚本即恢复；车机断网就关掉脚本或跑 `停止并恢复.command`。
+
+**Q：能覆盖/升级已安装的应用吗？**
+不能。安装器要求更新包与原应用包名、签名一致；本方法装的是**新包**。
+
+**Q：为什么一定要点「应用详情页」？**
+商店对列表/更新结果做了缓存，改缓存里的哈希不会生效；详情页是少数会实时请求元数据的入口。日志里出现 `[inject-update]` 就说明注入到位。
+
+**Q：为什么服务端返回 `sign:null` 也能装？**
+实测商店与安装器都不校验这个签名（或只作透传）。这是本方法成立的关键前提之一，商店/车机 OTA 更新后可能改变。
+
+**Q：macOS 提示找不到 mitmdump？**
+按[快速开始](#快速开始macos)装好；或在包内建 `venv/`，脚本会自动用它。
+
+**Q：Windows 上 443 被循环劫持？**
+已处理：WinDivert 过滤器只匹配热点网段（`x.x.x.2–254`），不会把本机 mitmproxy 的上游连接也劫持。若你改了热点网段，请同步改 `windows/win_sideload.py` 里的判断。
+
+## 让 AI 帮你配置
+
+把项目地址 **https://github.com/zhujinle/ZEELoad** 直接交给 AI，让它自己完成环境配置并把工具跑起来。
+
+## 已知限制
+
+- **只能装新包**，不能替换已安装应用；
+- **仅 IPv4 透明转发**（CDN 有 AAAA，macOS 版会用 `block return` 把目标域名的 IPv6 挡掉、逼回 IPv4；Windows 版依赖 ICS 不给客户端 IPv6）；
+- 全量解密（`--intercept-all`）可能让个别做了证书固定的车机应用暂时异常，退出脚本即恢复；
+- 商店「检查更新」有缓存，必须靠**详情页**触发新元数据；
+- 车机 OTA / 商店更新后，信任库或校验逻辑可能变化，需要重新验证；
+- Windows 版结构与 macOS 一致，但**尚未在真实 Windows 环境实测**。
+
+## 安全与合规
+
+- 本项目用于**自有车辆**的安装/研究测试；请勿用于他人车辆或规避付费/授权；
+- 安装的 APK 由使用者自行负责来源与合法性；仓库不附带任何第三方 APK（`artifacts/` 仅本机测试用，不随发布包分发）；
+- 工具不收集、不上传任何数据，所有日志只落在本机 `logs/`；
+- 使用前请确认当地法律法规与车辆保修条款。
+- ** 本项目仅做技术探讨，不得用于盈利用途，所产生的法律风险自担 **
+
+## 文件结构
+
+```text
+zeeload/
+├── README.md                    本文档
+├── 一键侧载安装.command          ★ 主入口（拖入 APK）
+├── 停止并恢复.command            兜底：卸载规则、停代理
+├── 检查环境.command              只读诊断
+├── scripts/
+│   ├── zeekr-sideload.sh         侧载入口（算哈希、调引擎）
+│   ├── transparent-test.sh       引擎：pf 转发 + mitmdump 生命周期（自动探测接口/车机）
+│   ├── stop-transparent.sh       卸载规则
+│   ├── check-environment.sh      环境自检
+│   └── inspect-pf.sh             只读导出 pf 规则（排障用）
+├── addons/zeekr_log.py           mitmproxy 插件（注入 / 替换 / 记录）
+├── windows/                      Windows 版（WinDivert + SNI 分流，beta）
+├── assets/                       Logo 与宣传图（svg / png / icns / ico）
+├── docs/
+│   └── 技术路径-车机APK侧载.md    原理、漏洞分析、证据、接口字段
+├── release/                      打包好的发布包（zip 与解压后的目录）
+├── lab/                          本机实验脚本（未纳入版本库）
+├── artifacts/                    本机下载的 APK（未纳入版本库）
+├── evidence/                     实测证据（未纳入版本库）
+└── logs/                         每次运行的输出（未纳入版本库）
+```
+
+## 版本
+
+### v1.0.0（2026-10-30）
+
+首个版本，项目命名 **极载 · ZEEload**。
+
+- **macOS**：一键侧载（拖入 APK），pf 透明转发 + mitmproxy `--emudhra` 解密
+- **Windows（beta）**：WinDivert 重定向 + 本地 SNI 分流，共用同一套注入/替换逻辑
+  - 启动脚本自动提权、纯 ASCII 输出；自动定位 `mitmdump.exe`（`Scripts\` / `%APPDATA%` / PATH / 内联）
+  - 要求并自动切换到 Python 3.12+，启动时校验 mitmproxy ≥ 12.3
+  - WinDivert 按方向过滤（只改写 INBOUND 车机包与分流器 OUTBOUND 回程包）
+  - `windows/selftest.py` 自检：函数完整性、SNI 解析、mitmproxy 版本
+- 自动探测：共享接口（`bridge*`）、车机（DHCP 租约）、mitmdump 位置
+- 更新注入支持 appList 与 app/detail 详情页两种响应
+- 大响应流式转发、IPv6 回退、签名→下载时间闸门
+- 独立 pf anchor、只作用于热点侧、退出自动卸载
+- 黑金 Logo（svg / png / icns / ico）与宣传图
+- 发布前已清除车辆识别信息（VIN/MAC/设备号/用户 ID/本机路径）
+
+## 参考
+
+- [mitmproxy 透明代理](https://docs.mitmproxy.org/stable/howto/transparent/)
+- [mitmproxy 证书机制](https://docs.mitmproxy.org/stable/concepts/certificates/)
+- [eMudhra 事件与受影响客户端](https://emudhra.we-have-a-problem.com/)
