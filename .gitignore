@@ -10,6 +10,10 @@ lab/
 venv
 .venv
 env
+# 本仓库 Windows 打包用的构建 venv 与构建期补丁
+.venv-build/
+.build-helper/
+.tmp-build/
 __pycache__/
 *.pyc
 *.pyo
@@ -31,3 +35,10 @@ Thumbs.db
 release/
 assets/zeeload.iconset/
 assets/alt-blue/
+
+# ---- PyInstaller（Windows 打包产物；HANDOFF.md / BUILD-REPORT.md 也放在这里，不入库）----
+windows/dist/
+windows/build/
+windows/dist-*/
+windows/build-*/
+*.spec
