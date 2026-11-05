@@ -20,7 +20,7 @@ jobs:
 
     steps:
       - name: Checkout source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Prepare package
         shell: bash
@@ -51,7 +51,7 @@ jobs:
           zip -r -y ZEELoad-macOS.zip ZEELoad
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: ZEELoad-macOS
           path: dist/ZEELoad-macOS.zip
