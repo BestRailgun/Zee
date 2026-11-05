@@ -1,1 +1,73 @@
 
+name: Build ZEELoad macOS
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish_release:
+        description: "Publish to GitHub Releases"
+        type: boolean
+        required: true
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    name: Package macOS ZIP
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Prepare package
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mkdir -p dist/ZEELoad
+
+          cp -R scripts dist/ZEELoad/
+          cp -R addons dist/ZEELoad/
+
+          cp -- *.command dist/ZEELoad/
+          cp README.md dist/ZEELoad/
+
+          find dist/ZEELoad -name '.DS_Store' -delete
+
+          find dist/ZEELoad -type f \
+            \( -name '*.sh' -o -name '*.command' \) \
+            -exec chmod +x {} +
+
+          echo "Package contents:"
+          find dist/ZEELoad -type f
+
+      - name: Create ZIP
+        shell: bash
+        run: |
+          cd dist
+          zip -r -y ZEELoad-macOS.zip ZEELoad
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ZEELoad-macOS
+          path: dist/ZEELoad-macOS.zip
+          retention-days: 30
+
+      - name: Publish GitHub Release
+        if: ${{ inputs.publish_release }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          TAG="macos-${GITHUB_RUN_NUMBER}"
+
+          gh release create "$TAG" \
+            dist/ZEELoad-macOS.zip \
+            --title "ZEELoad macOS ${TAG}" \
+            --notes "macOS script package. Requires Python 3.12+ and mitmproxy 12.3+." \
+            --target "$GITHUB_SHA"
+
