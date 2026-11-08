@@ -221,6 +221,9 @@ private struct Dashboard: View {
                         .foregroundStyle(.secondary)
                         .textSelection(.enabled)
                     Spacer()
+                    if model.canUseBundledMitmdump {
+                        Button("使用内置", action: model.useBundledMitmdump)
+                    }
                     Button("选择路径…", action: model.chooseMitmdump)
                 }
                 Text("车上无网线时，若共享来源里有 iPhone USB，可选它并共享到 Wi-Fi。")

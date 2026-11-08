@@ -2,6 +2,11 @@ name: Build ZEELoad for Apple Silicon
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/build-macos-gui.yml
+      - macos/**
 
 permissions:
   contents: read
@@ -43,11 +48,32 @@ jobs:
           cp scripts/{check-environment,zeekr-sideload,transparent-test}.sh "$resources/scripts/"
           cp addons/zeekr_log.py "$resources/addons/"
 
+          proxy_version=12.3.1
+          proxy_archive="mitmproxy-$proxy_version-macos-arm64.tar.gz"
+          curl --fail --silent --show-error --location --retry 3 \
+            --proto '=https' --proto-redir '=https' \
+            --output "$RUNNER_TEMP/$proxy_archive" \
+            "https://downloads.mitmproxy.org/$proxy_version/$proxy_archive"
+          printf '%s  %s\n' 9b7f7a8e3fd1b1544089c937c579ef1f0f503f0ea598c25bda9eab077c735b93 \
+            "$RUNNER_TEMP/$proxy_archive" | shasum -a 256 -c -
+          tar -xzf "$RUNNER_TEMP/$proxy_archive" -C "$contents/Helpers" mitmproxy.app
+          cp macos/mitmproxy-LICENSE.txt "$resources/"
+
           plutil -lint "$contents/Info.plist"
           codesign --force --sign - "$contents/Helpers/session-lock"
           codesign --force --sign - "$app"
-          codesign --verify --deep --strict "$app"
-          ditto -c -k --keepParent "$app" dist/ZEELoad-macOS-arm64.zip
+          archive=dist/ZEELoad-macOS-arm64.zip
+          ditto -c -k --keepParent "$app" "$archive"
+
+          unpacked="$RUNNER_TEMP/ZEELoad unpacked"
+          ditto -x -k "$archive" "$unpacked"
+          codesign --verify --deep --strict "$unpacked/ZEELoad.app"
+          mitmdump="$unpacked/ZEELoad.app/Contents/Helpers/mitmproxy.app/Contents/MacOS/mitmdump"
+          version=$(env -i HOME="$RUNNER_TEMP" PATH=/usr/bin:/bin:/usr/sbin:/sbin "$mitmdump" --version)
+          printf '%s\n' "$version"
+          grep -Fq "Mitmproxy: $proxy_version" <<< "$version"
+          options=$(env -i HOME="$RUNNER_TEMP" PATH=/usr/bin:/bin:/usr/sbin:/sbin "$mitmdump" --help)
+          grep -Fq -- '--emudhra' <<< "$options"
 
       - uses: actions/upload-artifact@v7
         with:

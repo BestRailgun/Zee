@@ -95,6 +95,10 @@ final class SessionModel: ObservableObject {
 
     var canEdit: Bool { !checking && active == nil }
     var canStop: Bool { active?.action == .run && phase != .stopping }
+    var canUseBundledMitmdump: Bool {
+        let bundled = Self.bundledMitmdumpPath
+        return mitmdump != bundled && FileManager.default.isExecutableFile(atPath: bundled)
+    }
 
     init() {
         let selected = UserDefaults.standard.string(forKey: "mitmdumpPath")
@@ -144,12 +148,19 @@ final class SessionModel: ObservableObject {
         check()
     }
 
+    func useBundledMitmdump() {
+        guard canEdit, canUseBundledMitmdump else { return }
+        UserDefaults.standard.removeObject(forKey: "mitmdumpPath")
+        mitmdump = Self.bundledMitmdumpPath
+        check()
+    }
+
     func check() { check(startAfter: false) }
     func start() { check(startAfter: true) }
 
     private func check(startAfter: Bool) {
         guard canEdit else { return }
-        if mitmdump.isEmpty { mitmdump = Self.findMitmdump() }
+        if !FileManager.default.isExecutableFile(atPath: mitmdump) { mitmdump = Self.findMitmdump() }
         let bridge = bridgeOverride.trimmingCharacters(in: .whitespacesAndNewlines)
         let car = carOverride.trimmingCharacters(in: .whitespacesAndNewlines)
         var address = in_addr()
@@ -388,7 +399,13 @@ final class SessionModel: ObservableObject {
         try process.run()
     }
 
+    private static var bundledMitmdumpPath: String {
+        Bundle.main.bundleURL
+            .appendingPathComponent("Contents/Helpers/mitmproxy.app/Contents/MacOS/mitmdump").path
+    }
+
     private static func findMitmdump() -> String {
+        if FileManager.default.isExecutableFile(atPath: bundledMitmdumpPath) { return bundledMitmdumpPath }
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         let appFolder = Bundle.main.bundleURL.deletingLastPathComponent()
         let repository = appFolder.deletingLastPathComponent()
