@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key>
+    <string>ZEELoad</string>
+    <key>CFBundleDisplayName</key>
+    <string>极载 · ZEELoad</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.bestrailgun.zeeload.mac</string>
+    <key>CFBundleExecutable</key>
+    <string>ZEELoad</string>
+    <key>CFBundleIconFile</key>
+    <string>zeeload.icns</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0.1</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>13.0</string>
+    <key>LSApplicationCategoryType</key>
+    <string>public.app-category.utilities</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>极载需要检查 Mac 互联网共享和车机连接状态。</string>
+</dict>
+</plist>

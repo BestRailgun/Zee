@@ -39,7 +39,7 @@ done
 [ -f "$APK" ] || { echo "APK 不存在：$APK" >&2; exit 2; }
 APK=$(cd "$(dirname "$APK")" && pwd)/$(basename "$APK")
 
-if ! file "$APK" | grep -qi 'zip'; then
+if ! file -b "$APK" | grep -Eqi 'zip|android package|java archive'; then
   echo "错误：$APK 不是 zip/APK 文件（是不是把 .command 或其他文件当成 APK 了？）" >&2
   exit 2
 fi

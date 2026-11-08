@@ -19,6 +19,11 @@ umask 077
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 BASE=$(cd "$SCRIPT_DIR/.." && pwd)
+DATA_DIR=${ZEEKR_DATA_DIR:-$BASE}
+CONF_DIR=$DATA_DIR/mitm-config
+GUI=${ZEEKR_GUI:-0}
+DIG_OPTIONS=(+short)
+[ "$GUI" = 0 ] || DIG_OPTIONS=(+time=2 +tries=1 +short)
 VENV=${ZEEKR_VENV:-}
 MITMDUMP=""
 ADDON=$BASE/addons/zeekr_log.py
@@ -74,7 +79,9 @@ done
 have() { command -v "$1" >/dev/null 2>&1; }
 
 # ---- mitmproxy 定位 ----
-if [ -n "$VENV" ]; then
+if [ -n "${ZEEKR_MITMDUMP:-}" ]; then
+  MITMDUMP=$ZEEKR_MITMDUMP
+elif [ -n "$VENV" ]; then
   MITMDUMP=$VENV/bin/mitmdump
 elif [ -x "$BASE/venv/bin/mitmdump" ]; then
   VENV=$BASE/venv; MITMDUMP=$VENV/bin/mitmdump
@@ -124,13 +131,13 @@ iface_prefix() {
 detect_lease() {
   local prefix="$1" mode="$2"
   [ -r /var/db/dhcpd_leases ] || return
-  awk -v prefix="$prefix" -v mode="$mode" '
+  awk -v prefix="$prefix" -v mode="$mode" -v car_ip="${3:-}" '
     /^\{/ { name=""; ip=""; hw=""; next }
     /name=/ { sub(/.*name=/, ""); name=$0 }
     /ip_address=/ { sub(/.*ip_address=/, ""); ip=$0 }
     /hw_address=/ { sub(/.*hw_address=/, ""); hw=$0 }
     /^\}/ {
-      if (ip ~ ("^" prefix)) {
+      if (index(ip, prefix) == 1 && (car_ip == "" || ip == car_ip)) {
         wanted = (name ~ /(auto|ivt|evb|zeekr|lynk|ecarx|dhu|headunit|hu)/)
         if (mode == "ip" && wanted) print ip
         if (mode == "ip") count++
@@ -144,11 +151,42 @@ detect_lease() {
   ' /var/db/dhcpd_leases
 }
 
+ipv4_number() {
+  local a b c d octet
+  [[ "$1" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] || return 1
+  IFS=. read -r a b c d <<< "$1"
+  for octet in "$a" "$b" "$c" "$d"; do
+    [[ "$octet" != 0?* ]] && (( 10#$octet <= 255 )) || return 1
+  done
+  printf '%u\n' "$(( (10#$a << 24) | (10#$b << 16) | (10#$c << 8) | 10#$d ))"
+}
+
+validate_gui_target() {
+  local bridge_info bridge_ip netmask bridge_number car_number
+  [[ "$IFACE" =~ ^bridge[0-9]+$ ]] || die "请选择 Mac 互联网共享的 bridge 接口"
+  bridge_info=$(ifconfig "$IFACE" 2>/dev/null) || die "共享接口 $IFACE 不存在"
+  grep -q 'status: active' <<< "$bridge_info" || die "共享接口 $IFACE 未激活，请先连接车机"
+  read -r bridge_ip netmask <<< "$(awk '/inet /{print $2, $4; exit}' <<< "$bridge_info")"
+  case "$bridge_ip" in
+    192.168.*|10.*|172.1[6-9].*|172.2[0-9].*|172.3[01].*) ;;
+    *) die "共享接口 $IFACE 没有私有 IPv4 地址" ;;
+  esac
+  [[ "$netmask" =~ ^0x[0-9a-fA-F]{8}$ ]] || die "共享接口 $IFACE 的 IPv4 掩码无效"
+  bridge_number=$(ipv4_number "$bridge_ip") || die "共享接口的 IPv4 地址无效"
+  car_number=$(ipv4_number "$CAR_IP") || die "车机 IPv4 地址无效"
+  if (( (car_number & netmask) != (bridge_number & netmask)
+       || car_number == bridge_number || (car_number & ~netmask) == 0
+       || (car_number & ~netmask) == (~netmask & 0xffffffff) )); then
+    die "车机 IP $CAR_IP 须是共享接口 $IFACE 网段内的设备地址"
+  fi
+  say "[gui-session] car=$CAR_IP"
+}
+
 say() { printf '%s\n' "$*"; }
 warn() { printf '警告：%s\n' "$*" >&2; }
 die() { printf '错误：%s\n' "$*" >&2; exit 1; }
 STAMP=$(date +%Y%m%d-%H%M%S)
-OUT=$BASE/logs/$STAMP
+OUT=$DATA_DIR/logs/$STAMP
 RULEFILE=$OUT/rdr.conf
 LOG=$OUT/mitm.log
 FLOW=$OUT/flows.mitm
@@ -181,24 +219,34 @@ cleanup() {
     elif [ "${HIT:-0}" = 0 ]; then
       warn "anchor 被求值但没有包命中：车机 IP/目标 IP 可能变化，可试 --all-443"
     fi
-    if pfctl -a "$ANCHOR" -F all 2>/dev/null; then
+    if pfctl -a "$ANCHOR" -F nat 2>/dev/null && pfctl -a "$ANCHOR" -F rules 2>/dev/null; then
       if pfctl -a "$ANCHOR" -s rules 2>/dev/null | grep -q .; then
-        warn "anchor $ANCHOR 仍有规则；请手动执行：sudo pfctl -a $ANCHOR -F all"
+        warn "anchor $ANCHOR 仍有规则，请执行停止并恢复"
       else
         say "[ok] 已卸载 pf 转发规则（${ANCHOR}）"
       fi
     else
-      warn "卸载 anchor 失败；请手动执行：sudo pfctl -a $ANCHOR -F all"
+      warn "卸载 anchor 失败，请执行停止并恢复"
+    fi
+    if [ "$GUI" = 1 ]; then
+      pfctl -k "$CAR_IP" >/dev/null 2>&1 || warn "车机旧连接状态可能需要等待重连"
     fi
   fi
 
   if [ "$PROXY_STARTED" = 1 ]; then
     pkill -f "$FLOW" 2>/dev/null && say "[ok] 已停止 mitmdump"
+    if [ "$GUI" = 1 ]; then
+      for attempt in 1 2 3 4 5; do
+        pgrep -f "$FLOW" >/dev/null 2>&1 || break
+        sleep 0.2
+      done
+      pkill -KILL -f "$FLOW" 2>/dev/null || :
+    fi
   fi
 
   # root 创建的产物交还给执行 sudo 的用户
   if [ -n "${SUDO_UID:-}" ]; then
-    chown -R "$SUDO_UID:${SUDO_GID:-$SUDO_UID}" "$BASE/logs" "$BASE/mitm-config" 2>/dev/null
+    chown -R "$SUDO_UID:${SUDO_GID:-$SUDO_UID}" "$DATA_DIR/logs" "$CONF_DIR" 2>/dev/null
   fi
 
   say ""
@@ -227,17 +275,27 @@ if [ -z "$IFACE" ]; then
   [ -n "$IFACE" ] || die "找不到正在共享的 bridge 接口；请确认已开启互联网共享，或用 ZEEKR_IFACE 指定"
 fi
 PREFIX=$(iface_prefix "$IFACE")
-if [ -z "$CAR_IP" ] && [ "$CHECK_ONLY" = 0 -o "$CHECK_ONLY" = 1 ]; then
-  CAR_IP=$(detect_lease "$PREFIX" ip | head -1)
+if [ -z "$CAR_IP" ] && [ -n "$PREFIX" ]; then
+  if [ "$GUI" = 1 ]; then
+    CAR_IP=$(detect_lease "$PREFIX" ip | sort -u)
+    if [ -z "$CAR_IP" ] || [[ "$CAR_IP" == *$'\n'* ]]; then
+      die "无法唯一识别车机 IP；请在车机网络详情查看 IPv4 地址，再到高级设置填入"
+    fi
+  else
+    CAR_IP=$(detect_lease "$PREFIX" ip | head -1)
+  fi
+fi
+if [ "$GUI" = 1 ]; then
+  validate_gui_target
 fi
 if [ -z "$CAR_MAC" ] && [ -n "$CAR_IP" ]; then
-  CAR_MAC=$(detect_lease "$PREFIX" mac | head -1)
+  CAR_MAC=$(detect_lease "$PREFIX" mac "$CAR_IP" | head -1)
 fi
 
 [ -x "$MITMDUMP" ] || die "找不到可执行的 mitmdump：${MITMDUMP}（可用 ZEEKR_VENV 覆盖）"
 [ -f "$ADDON" ] || die "找不到 addon：$ADDON"
 
-mkdir -p "$OUT" "$BASE/mitm-config"
+mkdir -p "$OUT" "$CONF_DIR" || die "无法创建日志或代理配置目录"
 if [ -n "${SUDO_UID:-}" ]; then chown -R "$SUDO_UID:${SUDO_GID:-$SUDO_UID}" "$OUT" 2>/dev/null; fi
 
 say "== 环境预检 =="
@@ -248,7 +306,7 @@ IFACE_ADDR=$(ifconfig "$IFACE" 2>/dev/null | awk '/inet /{print $2; exit}')
 say "[ok] $IFACE = $IFACE_ADDR"
 say "[ok] mitmdump: $MITMDUMP"
 
-if arp -n "$CAR_IP" 2>/dev/null | grep -qi "$CAR_MAC"; then
+if [ -n "$CAR_MAC" ] && arp -n "$CAR_IP" 2>/dev/null | grep -Fqi -- "$CAR_MAC"; then
   say "[ok] ARP 中 $CAR_IP 对应 $CAR_MAC"
 else
   warn "ARP 中没有 $CAR_IP -> ${CAR_MAC}。车机可能使用新 IP 或未连接；请先运行 scripts/check-environment.sh"
@@ -305,7 +363,7 @@ fi
 V6=""
 for d in $DOMAINS; do
   if have dig; then
-    v6s=$(dig +short AAAA "$d" 2>/dev/null | grep -E '^[0-9a-fA-F:]+$')
+    v6s=$(dig "${DIG_OPTIONS[@]}" AAAA "$d" 2>/dev/null | grep -E '^[0-9a-fA-F:]+$')
   else
     v6s=""
   fi
@@ -377,10 +435,12 @@ if ! pfctl -a "$ANCHOR" -f "$RULEFILE" 2>"$OUT/pf-load.err"; then
   die "加载 anchor 失败（见上方错误）"
 fi
 RULES_LOADED=1
-if ! pfctl -a "$ANCHOR" -s rules 2>/dev/null | grep -q .; then
+if ! pfctl -a "$ANCHOR" -s nat 2>/dev/null | grep -q .; then
+  [ "$GUI" = 0 ] || die "未读到已加载的转发规则，已回滚"
   warn "anchor 已加载但读不到规则，请检查 pf；继续前建议先停止"
 fi
 say "[ok] 已加载："
+pfctl -a "$ANCHOR" -s nat 2>/dev/null | sed 's/^/    /'
 pfctl -a "$ANCHOR" -s rules 2>/dev/null | sed 's/^/    /'
 
 if [ "$RESET_STATES" = 1 ]; then
@@ -426,7 +486,7 @@ MITM_ARGS=(
   --emudhra
   --listen-host "$LISTEN_IP"
   --listen-port "$PORT"
-  --set "confdir=$BASE/mitm-config"
+  --set "confdir=$CONF_DIR"
   --set stream_large_bodies=2m
   --set "zeekr_corrupt_offset=$CORRUPT"
   -s "$ADDON"
@@ -459,8 +519,8 @@ if [ -n "$REPLACE_APK" ]; then
 fi
 
 export PYTHONUNBUFFERED=1
-"$MITMDUMP" "${MITM_ARGS[@]}" 2>&1 | tee -a "$LOG" &
 PROXY_STARTED=1
+"$MITMDUMP" "${MITM_ARGS[@]}" 2>&1 | tee -a "$LOG" &
 PROXY_WAIT=$!
 
 # 给进程几秒启动时间，确认监听成功再提示
@@ -474,7 +534,11 @@ if have lsof; then
   n=0
   until lsof -nP -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1; do
     n=$((n + 1))
-    [ "$n" -ge 5 ] && { warn "端口 $PORT 未见监听，请检查日志：$LOG"; break; }
+    if [ "$n" -ge 5 ]; then
+      [ "$GUI" = 0 ] || die "端口 $PORT 未见监听，已回滚"
+      warn "端口 $PORT 未见监听，请检查日志：$LOG"
+      break
+    fi
     sleep 1
   done
 fi
@@ -496,5 +560,7 @@ echo "hosts=$HOSTS" >> "$OUT/summary.txt"
 echo "mitmdump_args=${MITM_ARGS[*]}" >> "$OUT/summary.txt"
 
 wait "$PROXY_WAIT"
+RESULT=$?
 echo "stop=$(date)" >> "$OUT/summary.txt"
+[ "$GUI" = 0 ] || exit "$RESULT"
 exit 0

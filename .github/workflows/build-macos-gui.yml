@@ -1,0 +1,61 @@
+name: Build ZEELoad for Apple Silicon
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/build-macos-gui.yml
+      - macos/**
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Build and package ZEELoad.app
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! -f macos/ZEELoadApp.swift ]] ||
+             ! grep -Fq '[gui-env]' scripts/check-environment.sh ||
+             ! grep -Fq '[gui-session]' scripts/transparent-test.sh; then
+            echo '::error::Commit the GUI sources and updated scripts from the ZEELoad GUI source ZIP.'
+            exit 1
+          fi
+
+          target=arm64-apple-macosx13.0
+          sdk=$(xcrun --sdk macosx --show-sdk-path)
+          app=dist/ZEELoad.app
+          contents="$app/Contents"
+          resources="$contents/Resources"
+          mkdir -p "$contents"/{MacOS,Helpers} "$resources"/{macos,scripts,addons}
+
+          xcrun --sdk macosx swiftc -sdk "$sdk" -target "$target" -swift-version 5 \
+            -parse-as-library -O macos/ZEELoadApp.swift macos/SessionModel.swift \
+            -o "$contents/MacOS/ZEELoad"
+          xcrun --sdk macosx clang -isysroot "$sdk" -target "$target" -std=gnu11 \
+            -Wall -Wextra -Werror -O2 macos/session-lock.c -o "$contents/Helpers/session-lock"
+
+          osacompile -o "$resources/macos/authorize.scpt" macos/authorize.applescript
+          cp macos/session.sh "$resources/macos/"
+          cp macos/Info.plist "$contents/"
+          cp assets/zeeload.icns "$resources/"
+          cp scripts/{check-environment,zeekr-sideload,transparent-test}.sh "$resources/scripts/"
+          cp addons/zeekr_log.py "$resources/addons/"
+
+          plutil -lint "$contents/Info.plist"
+          codesign --force --sign - "$contents/Helpers/session-lock"
+          codesign --force --sign - "$app"
+          codesign --verify --deep --strict "$app"
+          ditto -c -k --keepParent "$app" dist/ZEELoad-macOS-arm64.zip
+
+      - uses: actions/upload-artifact@v7
+        with:
+          path: dist/ZEELoad-macOS-arm64.zip
+          archive: false
+          if-no-files-found: error

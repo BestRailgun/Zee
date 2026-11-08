@@ -137,6 +137,8 @@ A：解密 + 改写 TLS
 
 ## 快速开始（macOS）
 
+如需图形界面，可按 [macOS GUI 构建说明](macos/README.md) 生成 `ZEELoad.app`。
+
 ### 1. 安装 mitmproxy
 
 脚本会自动在以下位置找 `mitmdump`，任选一种即可：
