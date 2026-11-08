@@ -2,11 +2,6 @@ name: Build ZEELoad for Apple Silicon
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - .github/workflows/build-macos-gui.yml
-      - macos/**
 
 permissions:
   contents: read
