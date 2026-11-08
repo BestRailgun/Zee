@@ -69,11 +69,15 @@ jobs:
           ditto -x -k "$archive" "$unpacked"
           codesign --verify --deep --strict "$unpacked/ZEELoad.app"
           mitmdump="$unpacked/ZEELoad.app/Contents/Helpers/mitmproxy.app/Contents/MacOS/mitmdump"
-          version=$(env -i HOME="$RUNNER_TEMP" PATH=/usr/bin:/bin:/usr/sbin:/sbin "$mitmdump" --version)
+          probe=(env -i "HOME=$RUNNER_TEMP" PATH=/usr/bin:/bin:/usr/sbin:/sbin "$mitmdump")
+          version=$("${probe[@]}" --version)
           printf '%s\n' "$version"
           grep -Fq "Mitmproxy: $proxy_version" <<< "$version"
-          options=$(env -i HOME="$RUNNER_TEMP" PATH=/usr/bin:/bin:/usr/sbin:/sbin "$mitmdump" --help)
-          grep -Fq -- '--emudhra' <<< "$options"
+          # This mitmdump release prints help before exiting with status 1.
+          grep -Fq -- '--emudhra' <("${probe[@]}" --help 2>&1)
+          options=$("${probe[@]}" --emudhra --options \
+            -s "$unpacked/ZEELoad.app/Contents/Resources/addons/zeekr_log.py")
+          grep -q '^zeekr_out:' <<< "$options"
 
       - uses: actions/upload-artifact@v7
         with:
