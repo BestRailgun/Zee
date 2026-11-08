@@ -2,6 +2,11 @@ name: Build ZEELoad for Apple Silicon
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/build-macos-gui.yml
+      - macos/**
 
 permissions:
   contents: read
@@ -62,16 +67,16 @@ jobs:
 
           unpacked="$RUNNER_TEMP/ZEELoad unpacked"
           ditto -x -k "$archive" "$unpacked"
-          codesign --verify --deep --strict "$unpacked/ZEELoad.app"
-          mitmdump="$unpacked/ZEELoad.app/Contents/Helpers/mitmproxy.app/Contents/MacOS/mitmdump"
-          probe=(env -i "HOME=$RUNNER_TEMP" PATH=/usr/bin:/bin:/usr/sbin:/sbin "$mitmdump")
-          version=$("${probe[@]}" --version)
-          printf '%s\n' "$version"
-          grep -Fq "Mitmproxy: $proxy_version" <<< "$version"
-          # This mitmdump release prints help before exiting with status 1.
-          grep -Fq -- '--emudhra' <("${probe[@]}" --help 2>&1)
-          options=$("${probe[@]}" --emudhra --options \
-            -s "$unpacked/ZEELoad.app/Contents/Resources/addons/zeekr_log.py")
+          unpacked_app="$unpacked/ZEELoad.app"
+          codesign --verify --deep --strict "$unpacked_app"
+          clean_env=(env -i "HOME=$RUNNER_TEMP" PATH=/usr/bin:/bin:/usr/sbin:/sbin)
+          diagnostics=$("${clean_env[@]}" ZEEKR_GUI=1 ZEEKR_DOMAINS=localhost \
+            ZEEKR_MITMDUMP=/missing/mitmdump ZEEKR_VENV=/missing \
+            /bin/bash "$unpacked_app/Contents/Resources/scripts/check-environment.sh")
+          grep -F "[gui-env] mitmdump=Mitmproxy: $proxy_version" <<< "$diagnostics"
+          mitmdump="$unpacked_app/Contents/Helpers/mitmproxy.app/Contents/MacOS/mitmdump"
+          options=$("${clean_env[@]}" "$mitmdump" --emudhra --options \
+            -s "$unpacked_app/Contents/Resources/addons/zeekr_log.py")
           grep -q '^zeekr_out:' <<< "$options"
 
       - uses: actions/upload-artifact@v7

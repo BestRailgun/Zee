@@ -123,7 +123,7 @@ private struct Dashboard: View {
                 statusRow("共享接口", icon: "wifi", value: report?.bridge, empty: "未发现共享桥")
                 statusRow("车机 IPv4", icon: "car.side", value: report?.car, empty: "尚未识别")
                 statusRow("Mac 默认路由", icon: "arrow.up.right", value: report?.route, empty: "未发现默认路由")
-                statusRow("mitmdump", icon: "terminal", value: mitmText, empty: "等待检测",
+                statusRow("内置 mitmdump", icon: "terminal", value: mitmText, empty: "等待检测",
                           needsAttention: report?.mitmdumpReady == false)
             }
             Divider()
@@ -211,20 +211,6 @@ private struct Dashboard: View {
                     LabeledContent("车机 IPv4") {
                         TextField("车机 IPv4", text: $model.carOverride, prompt: Text("自动检测，如 192.168.2.10")).labelsHidden()
                     }
-                }
-                HStack(spacing: 12) {
-                    Text("mitmdump")
-                    Text(model.mitmdump.isEmpty ? "未找到可执行文件" : model.mitmdump)
-                        .font(.caption.monospaced())
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                        .foregroundStyle(.secondary)
-                        .textSelection(.enabled)
-                    Spacer()
-                    if model.canUseBundledMitmdump {
-                        Button("使用内置", action: model.useBundledMitmdump)
-                    }
-                    Button("选择路径…", action: model.chooseMitmdump)
                 }
                 Text("车上无网线时，若共享来源里有 iPhone USB，可选它并共享到 Wi-Fi。")
                     .font(.caption)

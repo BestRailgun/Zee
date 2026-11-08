@@ -4,7 +4,10 @@
 
 set -uo pipefail
 BASE=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-if [ -n "${ZEEKR_MITMDUMP:-}" ]; then
+GUI=${ZEEKR_GUI:-0}
+if [ "$GUI" = 1 ]; then
+  MITMDUMP="${BASE%/*}/Helpers/mitmproxy.app/Contents/MacOS/mitmdump"
+elif [ -n "${ZEEKR_MITMDUMP:-}" ]; then
   MITMDUMP=$ZEEKR_MITMDUMP
 elif [ -n "${ZEEKR_VENV:-}" ]; then
   MITMDUMP=$ZEEKR_VENV/bin/mitmdump
@@ -15,7 +18,6 @@ else
 fi
 PORT=${ZEEKR_PORT:-18080}
 DOMAINS=${ZEEKR_DOMAINS:-"snc-api-gw.zeekrlife.com snc-download-cdn.zeekrlife.com"}
-GUI=${ZEEKR_GUI:-0}
 DIG_OPTIONS=(+short)
 [ "$GUI" = 0 ] || DIG_OPTIONS=(+time=2 +tries=1 +short)
 

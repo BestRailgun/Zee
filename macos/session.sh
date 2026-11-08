@@ -11,8 +11,8 @@ ANCHOR=com.apple/zeekr-capture-gui
 
 worker=0
 if [ "${1:-}" = worker ]; then worker=1; shift; fi
-[ "$#" = 8 ] && [ "$(id -u)" = 0 ] || exit 64
-action=$1 owner=$2 client=$3 session=$4 apk=$5 iface=$6 car=$7 mitmdump=$8
+[ "$#" = 7 ] && [ "$(id -u)" = 0 ] || exit 64
+action=$1 owner=$2 client=$3 session=$4 apk=$5 iface=$6 car=$7
 case "$action" in run|restore) ;; *) exit 64 ;; esac
 [[ "$owner" =~ ^[1-9][0-9]*$ && "$client" =~ ^[1-9][0-9]*$ && "$session" = /* ]] || exit 64
 [[ -d "$session" && ! -L "$session" ]] || exit 64
@@ -90,10 +90,8 @@ finish() {
 trap 'finish "$?"' EXIT
 trap 'exit 130' INT TERM HUP
 
-[[ "$mitmdump" = /* && -x "$mitmdump" ]] || { echo '错误：mitmdump 路径无效'; exit 1; }
 export ZEEKR_GUI=1 ZEEKR_ANCHOR="$ANCHOR" ZEEKR_DATA_DIR="$runtime"
-export ZEEKR_MITMDUMP="$mitmdump" ZEEKR_IFACE="$iface" ZEEKR_CAR_IP="$car"
-export PATH="$PATH:${mitmdump%/*}"
+export ZEEKR_IFACE="$iface" ZEEKR_CAR_IP="$car"
 
 /bin/bash "$RESOURCES/scripts/zeekr-sideload.sh" --apk "$apk" 9>&- &
 child=$!

@@ -52,15 +52,12 @@ final class SessionModel: ObservableObject {
         let apk: String
         let bridge: String
         let car: String
-        let mitmdump: String
 
         var environment: [String: String] {
-            let bin = mitmdump.isEmpty ? "" : ":" + URL(fileURLWithPath: mitmdump).deletingLastPathComponent().path
-            return ["PATH": "/usr/bin:/bin:/usr/sbin:/sbin" + bin,
+            ["PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
              "LANG": "en_US.UTF-8",
              "HOME": FileManager.default.homeDirectoryForCurrentUser.path,
-             "ZEEKR_GUI": "1", "ZEEKR_IFACE": bridge, "ZEEKR_CAR_IP": car,
-             "ZEEKR_MITMDUMP": mitmdump.isEmpty ? "/dev/null" : mitmdump]
+             "ZEEKR_GUI": "1", "ZEEKR_IFACE": bridge, "ZEEKR_CAR_IP": car]
         }
     }
 
@@ -75,7 +72,6 @@ final class SessionModel: ObservableObject {
     @Published var carOverride = ""
     @Published private(set) var apk: URL?
     @Published private(set) var apkSize: Int64 = 0
-    @Published private(set) var mitmdump: String
     @Published private(set) var report: EnvironmentReport?
     @Published private(set) var phase: Phase = .idle
     @Published private(set) var detail = "连接车机热点并选择 APK 后，即可开始。"
@@ -95,18 +91,10 @@ final class SessionModel: ObservableObject {
 
     var canEdit: Bool { !checking && active == nil }
     var canStop: Bool { active?.action == .run && phase != .stopping }
-    var canUseBundledMitmdump: Bool {
-        let bundled = Self.bundledMitmdumpPath
-        return mitmdump != bundled && FileManager.default.isExecutableFile(atPath: bundled)
-    }
 
     init() {
-        let selected = UserDefaults.standard.string(forKey: "mitmdumpPath")
-        if let selected, FileManager.default.isExecutableFile(atPath: selected) {
-            mitmdump = selected
-        } else {
-            mitmdump = Self.findMitmdump()
-        }
+        // Remove the executable path stored by earlier releases.
+        UserDefaults.standard.removeObject(forKey: "mitmdumpPath")
     }
 
     func chooseAPK() {
@@ -130,37 +118,11 @@ final class SessionModel: ObservableObject {
         detail = "APK 已选定。开始前将重新检查网络和工具。"
     }
 
-    func chooseMitmdump() {
-        let panel = NSOpenPanel()
-        panel.title = "选择 mitmdump 可执行文件"
-        panel.showsHiddenFiles = true
-        panel.canChooseDirectories = false
-        if !mitmdump.isEmpty {
-            panel.directoryURL = URL(fileURLWithPath: mitmdump).deletingLastPathComponent()
-        }
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        guard url.lastPathComponent == "mitmdump", FileManager.default.isExecutableFile(atPath: url.path) else {
-            detail = "请选择名为 mitmdump 的可执行文件。"
-            return
-        }
-        mitmdump = url.path
-        UserDefaults.standard.set(mitmdump, forKey: "mitmdumpPath")
-        check()
-    }
-
-    func useBundledMitmdump() {
-        guard canEdit, canUseBundledMitmdump else { return }
-        UserDefaults.standard.removeObject(forKey: "mitmdumpPath")
-        mitmdump = Self.bundledMitmdumpPath
-        check()
-    }
-
     func check() { check(startAfter: false) }
     func start() { check(startAfter: true) }
 
     private func check(startAfter: Bool) {
         guard canEdit else { return }
-        if !FileManager.default.isExecutableFile(atPath: mitmdump) { mitmdump = Self.findMitmdump() }
         let bridge = bridgeOverride.trimmingCharacters(in: .whitespacesAndNewlines)
         let car = carOverride.trimmingCharacters(in: .whitespacesAndNewlines)
         var address = in_addr()
@@ -172,7 +134,7 @@ final class SessionModel: ObservableObject {
             fail("请填入车机的 IPv4 地址。")
             return
         }
-        let options = Options(apk: apk?.path ?? "", bridge: bridge, car: car, mitmdump: mitmdump)
+        let options = Options(apk: apk?.path ?? "", bridge: bridge, car: car)
         if startAfter && !FileManager.default.isReadableFile(atPath: options.apk) {
             fail("APK 已移动或无法读取，请重新选择。")
             return
@@ -212,7 +174,7 @@ final class SessionModel: ObservableObject {
         self.report = report
 
         guard status == 0 && report.addon else { fail("环境检查失败，请查看运行日志。"); return }
-        guard report.mitmdumpReady else { fail("请选择支持 --emudhra 的 mitmdump。"); return }
+        guard report.mitmdumpReady else { fail("内置 mitmdump 检查失败，请重新下载并解压 ZEELoad.app。"); return }
         guard !report.bridge.isEmpty else { fail("未检测到共享接口。请打开互联网共享，并让车机连上 Mac 的 Wi-Fi。"); return }
         guard !report.portBusy else { fail("18080 端口已占用，请结束之前的代理会话。"); return }
         if startAfter {
@@ -226,7 +188,7 @@ final class SessionModel: ObservableObject {
 
     func restore() {
         guard canEdit else { return }
-        begin(.restore, options: Options(apk: "", bridge: "", car: "", mitmdump: ""))
+        begin(.restore, options: Options(apk: "", bridge: "", car: ""))
     }
 
     private func begin(_ action: Action, options: Options) {
@@ -239,7 +201,7 @@ final class SessionModel: ObservableObject {
         process.arguments = [resources.appendingPathComponent("macos/authorize.scpt").path,
                              resources.appendingPathComponent("macos/session.sh").path,
                              action.rawValue, String(getuid()), String(getpid()), directory.path,
-                             options.apk, options.bridge, options.car, options.mitmdump]
+                             options.apk, options.bridge, options.car]
         process.terminationHandler = { [weak self] process in
             let status = process.terminationStatus
             Task { @MainActor in self?.ended(status: status, response: response) }
@@ -397,23 +359,5 @@ final class SessionModel: ObservableObject {
         process.standardOutput = output
         process.standardError = output
         try process.run()
-    }
-
-    private static var bundledMitmdumpPath: String {
-        Bundle.main.bundleURL
-            .appendingPathComponent("Contents/Helpers/mitmproxy.app/Contents/MacOS/mitmdump").path
-    }
-
-    private static func findMitmdump() -> String {
-        if FileManager.default.isExecutableFile(atPath: bundledMitmdumpPath) { return bundledMitmdumpPath }
-        let home = FileManager.default.homeDirectoryForCurrentUser.path
-        let appFolder = Bundle.main.bundleURL.deletingLastPathComponent()
-        let repository = appFolder.deletingLastPathComponent()
-        let paths = ["\(appFolder.path)/venv/bin", "\(repository.path)/venv/bin",
-                     "\(home)/.mitmproxy-venv/bin", "/opt/homebrew/bin", "/usr/local/bin",
-                     "\(home)/.local/bin", "\(home)/Library/Python/3.12/bin"]
-            + (ProcessInfo.processInfo.environment["PATH"] ?? "").split(separator: ":").map(String.init)
-        return paths.filter { $0.hasPrefix("/") }.map { "\($0)/mitmdump" }
-            .first { FileManager.default.isExecutableFile(atPath: $0) } ?? ""
     }
 }

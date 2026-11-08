@@ -79,7 +79,9 @@ done
 have() { command -v "$1" >/dev/null 2>&1; }
 
 # ---- mitmproxy 定位 ----
-if [ -n "${ZEEKR_MITMDUMP:-}" ]; then
+if [ "$GUI" = 1 ]; then
+  MITMDUMP="${BASE%/*}/Helpers/mitmproxy.app/Contents/MacOS/mitmdump"
+elif [ -n "${ZEEKR_MITMDUMP:-}" ]; then
   MITMDUMP=$ZEEKR_MITMDUMP
 elif [ -n "$VENV" ]; then
   MITMDUMP=$VENV/bin/mitmdump
@@ -292,7 +294,7 @@ if [ -z "$CAR_MAC" ] && [ -n "$CAR_IP" ]; then
   CAR_MAC=$(detect_lease "$PREFIX" mac "$CAR_IP" | head -1)
 fi
 
-[ -x "$MITMDUMP" ] || die "找不到可执行的 mitmdump：${MITMDUMP}（可用 ZEEKR_VENV 覆盖）"
+[ -x "$MITMDUMP" ] || die "找不到可执行的 mitmdump：${MITMDUMP}"
 [ -f "$ADDON" ] || die "找不到 addon：$ADDON"
 
 mkdir -p "$OUT" "$CONF_DIR" || die "无法创建日志或代理配置目录"
